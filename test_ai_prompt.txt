@@ -1,0 +1,191 @@
+下面代码是用来检测屏幕上的某个区域是否被按下或者抬起的旧脚本，修改要求在最后面
+cat > /sdcard/test_touch.sh <<'EOF'
+timeout 10 sh -c '
+
+SCREEN_X=1200
+SCREEN_Y=2670
+RAW_X_MAX=119999
+RAW_Y_MAX=266999
+
+PX1=10
+PX2=1100
+PY1=10
+PY2=1300
+
+CHECK_DOWN=true
+CHECK_UP=false
+
+
+
+if [ "$PX1" -gt "$PX2" ]; then
+    tmp=$PX1
+    PX1=$PX2
+    PX2=$tmp
+fi
+
+if [ "$PY1" -gt "$PY2" ]; then
+    tmp=$PY1
+    PY1=$PY2
+    PY2=$tmp
+fi
+
+RX1=$((PX1 * RAW_X_MAX / (SCREEN_X-1)))
+RY1=$((PY1 * RAW_Y_MAX / (SCREEN_Y-1)))
+RX2=$((PX2 * RAW_X_MAX / (SCREEN_X-1)))
+RY2=$((PY2 * RAW_Y_MAX / (SCREEN_Y-1)))
+
+x=0
+y=0
+touch_down=0
+down_in_area=0
+up_in_area=0
+
+check_area()
+{
+    [ "$x" -ge "$RX1" ] &&
+    [ "$x" -le "$RX2" ] &&
+    [ "$y" -ge "$RY1" ] &&
+    [ "$y" -le "$RY2" ]
+}
+
+getevent -lt /dev/input/event7 |
+while IFS= read -r line
+do
+    case "$line" in
+
+    *"ABS_MT_POSITION_X"*)
+        raw=$(echo "$line" | awk "{print \$NF}")
+        x=$((16#$raw))
+        ;;
+
+    *"ABS_MT_POSITION_Y"*)
+        raw=$(echo "$line" | awk "{print \$NF}")
+        y=$((16#$raw))
+        ;;
+
+    *"ABS_MT_TRACKING_ID"*)
+        raw=$(echo "$line" | awk "{print \$NF}")
+
+        if [ "$raw" != "ffffffff" ]
+        then
+            touch_down=1
+
+            if check_area
+            then
+                down_in_area=1
+            fi
+
+            if [ "$CHECK_DOWN" = "true" ] &&
+               [ "$CHECK_UP" = "false" ] &&
+               [ "$down_in_area" -eq 1 ]
+            then
+                echo 1
+                exit 0
+            fi
+
+        else
+            touch_down=0
+
+            if check_area
+            then
+                up_in_area=1
+            fi
+
+            if [ "$CHECK_UP" = "true" ] &&
+               [ "$CHECK_DOWN" = "false" ] &&
+               [ "$up_in_area" -eq 1 ]
+            then
+                echo 1
+                exit 0
+            fi
+
+            if [ "$CHECK_UP" = "true" ] &&
+               [ "$CHECK_DOWN" = "true" ] &&
+               [ "$down_in_area" -eq 1 ] &&
+               [ "$up_in_area" -eq 1 ]
+            then
+                echo 1
+                exit 0
+            fi
+
+            down_in_area=0
+            up_in_area=0
+        fi
+        ;;
+
+    *"EV_SYN"*"SYN_REPORT"*)
+        if [ "$CHECK_UP" = "false" ] &&
+           [ "$CHECK_DOWN" = "false" ] &&
+           [ "$touch_down" -eq 1 ] &&
+           check_area
+        then
+            echo 1
+            exit 0
+        fi
+        ;;
+
+    esac
+done
+
+'
+
+ret=$?
+
+if [ "$ret" -eq 124 ]
+then
+    echo 0
+fi
+EOF
+
+
+完全重构上面这个代码的实现逻辑，按照下面我给出的逻辑及其架构要求
+调式期间采用真实的值构建代码，不使用参数值
+整体架构有3个子函数，一个主流程
+一、3个子函数功能如下
+
+check_area()
+{
+持续检测
+仅匹配ABS_MT_POSITION_X或ABS_MT_POSITION_X，注意坐标的配对问题。当x、y坐标落在区域内时，返回1，反之一直循环执行
+}
+
+check_DOWN_area()
+{
+持续检测
+将下面的内容作为一个整体进行匹配，需要进行正则化处理
+EV_KEY       BTN_TOUCH            DOWN                
+EV_KEY       BTN_TOOL_FINGER      DOWN                
+EV_ABS       ABS_MT_TRACKING_ID   0002124d            
+EV_ABS       ABS_MT_POSITION_X    00008b10            
+EV_ABS       ABS_MT_POSITION_Y    00014564
+立刻检查x、y坐标是否落在指定区域，如果成立则返回1，反之则一直循环检测
+}
+
+check_UP_area()
+{
+持续检测
+先持续匹配ABS_MT_POSITION_X或ABS_MT_POSITION_X，并更新坐标，当匹配到下面的内容（需要正则化处理）的时候，停止检测
+EV_KEY       BTN_TOUCH            UP                  
+EV_KEY       BTN_TOOL_FINGER      UP 
+停止更新，判断x、y是否落在区域内，在区域内返回1，反之返回0
+}
+
+
+二、主流程如下
+
+1、当CHECK_DOWN=false、CHECK_UP=false时：
+直接调用check_area()函数，如果该check_area()函数返回1，则该也脚本返回1，脚本结束。没有返回值则一直等待，直到超时被动结束
+
+2、当CHECK_DOWN=true时：
+一个循环
+    先调用check_DOWN_area()函数,阻塞等待其返回值1，
+    如果返回1，则进一步判断，
+        如果CHECK_UP=false，则直接向脚本外部返回1，脚本结束
+        如果CHECK_UP=true，则开始调用check_UP_area()函数，
+            如果该check_UP_area()函数返回1，则该脚本返回1，脚本结束
+            如果该check_UP_area()函数返回0，则结束该流程2的本次循环（也就是回到该流程2的起始位置会重新调用check_DOWN_area()函数,重走流程），开始下一次循环。直到超时被动结束
+
+3、当CHECK_DOWN=false、CHECK_UP=true时：
+直接调用check_UP_area()函数，
+    如果该check_UP_area()函数返回1，则该脚本返回1，脚本结束
+    如果该check_UP_area()函数返回0，则继续调用check_UP_area()函数，直到超时被动结束
