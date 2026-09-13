@@ -342,8 +342,8 @@ check_UP_area()
 # 主流程
 # ============================================================
 
-if [ "$CHECK_DOWN" = "false" ] &&
-   [ "$CHECK_UP" = "false" ]
+if [ "$CHECK_DOWN" = "False" ] &&
+   [ "$CHECK_UP" = "False" ]
 then
 
     # --------------------------------------------------------
@@ -362,7 +362,7 @@ then
     fi
 
 
-elif [ "$CHECK_DOWN" = "true" ]
+elif [ "$CHECK_DOWN" = "True" ]
 then
 
     # --------------------------------------------------------
@@ -370,10 +370,10 @@ then
     #
     # 检测 DOWN
     #
-    # 如果 CHECK_UP=false：
+    # 如果 CHECK_UP=False：
     #     DOWN 在区域 → 1
     #
-    # 如果 CHECK_UP=true：
+    # 如果 CHECK_UP=True：
     #     DOWN 在区域
     #          ↓
     #     持续检测 UP
@@ -391,7 +391,7 @@ then
 
             # DOWN 在区域
 
-            if [ "$CHECK_UP" = "false" ]
+            if [ "$CHECK_UP" = "False" ]
             then
                 echo 1
                 exit 0
@@ -399,7 +399,6 @@ then
 
 
             # DOWN + UP 模式
-
             if check_UP_area
             then
                 echo 1
@@ -414,8 +413,8 @@ then
     done
 
 
-elif [ "$CHECK_DOWN" = "false" ] &&
-     [ "$CHECK_UP" = "true" ]
+elif [ "$CHECK_DOWN" = "False" ] &&
+     [ "$CHECK_UP" = "True" ]
 then
 
     # --------------------------------------------------------
@@ -439,5 +438,6 @@ then
     done
 
 fi
+
 
 exit 0
