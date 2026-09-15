@@ -4,11 +4,42 @@
 # 退出处理：当脚本退出时自动杀掉 getevent 进程
 # 解决脚本退出后 getevent 依然挂起导致命令行不返回的问题
 # ============================================================
-trap 'killall getevent 2>/dev/null' EXIT
+GETEVENT_PID=""
+EVENT_LOG=""
+EVENT_FD=0
+trap 'if [ -n "$GETEVENT_PID" ]; then kill "$GETEVENT_PID" 2>/dev/null; fi; if [ -n "$EVENT_LOG" ] && [ -f "$EVENT_LOG" ]; then rm -f "$EVENT_LOG"; fi;' EXIT
 
 # ============================================================
 # 基本参数
 # ============================================================
+
+EVENT_DEVICE=${EVENT_DEVICE:-/dev/input/event7}
+
+# ============================================================
+# 直接在脚本内部启动 getevent
+# ============================================================
+for d in /tmp /data/data/com.termux/files/usr/tmp /dev/shm; do
+    [ -d "$d" ] || continue
+    EVENT_LOG="$d/getevent_$$.log"
+    rm -f "$EVENT_LOG"
+    : > "$EVENT_LOG" || continue
+    break
+done
+
+if [ -z "$EVENT_LOG" ] || [ ! -f "$EVENT_LOG" ]; then
+    echo "Cannot create temp log for getevent" >&2
+    exit 1
+fi
+
+if ! command -v getevent >/dev/null 2>&1; then
+    echo "getevent command not found" >&2
+    exit 1
+fi
+
+getevent -lt "$EVENT_DEVICE" >"$EVENT_LOG" 2>/dev/null &
+GETEVENT_PID=$!
+exec 3<"$EVENT_LOG"
+EVENT_FD=3
 
 SCREEN_X=1200
 SCREEN_Y=2670
@@ -25,6 +56,7 @@ RAW_Y_MAX=266999
 # 默认检测模式
 : ${CHECK_DOWN:=False}
 : ${CHECK_UP:=False}
+
 
 
 # ============================================================
@@ -83,13 +115,20 @@ in_area()
 # ============================================================
 # 读取一行 getevent
 #
-# 所有三个检测函数都从 stdin 读取。
-# 主流程只启动一个 getevent。
+# 仅使用脚本内部启动的 getevent 流
+# 不再读取外部 stdin / 管道输入
 # ============================================================
 
 read_event()
 {
-    IFS= read -r line
+    if [ "$EVENT_FD" -ne 0 ] 2>/dev/null; then
+        IFS= read -r line <&"$EVENT_FD"
+
+        echo >/dev/null
+    else
+        IFS= read -r line
+
+    fi
 }
 
 
@@ -144,7 +183,6 @@ check_area()
 
         esac
     done
-
     return 1
 }
 
