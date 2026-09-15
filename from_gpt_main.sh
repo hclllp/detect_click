@@ -23,8 +23,8 @@ RAW_Y_MAX=266999
 : ${PY2:=1300}
 
 # 默认检测模式
-: ${CHECK_DOWN:=false}
-: ${CHECK_UP:=false}
+: ${CHECK_DOWN:=False}
+: ${CHECK_UP:=False}
 
 
 # ============================================================
