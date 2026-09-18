@@ -47,6 +47,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 is_integer() { case "$1" in ''|*[!0-9-]*|-) return 1 ;; *) return 0 ;; esac; }
+is_hex() { case "$1" in ''|*[!0-9a-fA-F]*) return 1 ;; *) return 0 ;; esac; }
 for value in "$Z_X1" "$Z_Y1" "$Z_X2" "$Z_Y2" "$R" \
     "$P1_X" "$P1_Y" "$P2_X" "$P2_Y" "$P3_X" "$P3_Y" \
     "$P4_X" "$P4_Y" "$P5_X" "$P5_Y" "$P6_X" "$P6_Y" \
@@ -127,15 +128,24 @@ while IFS= read -r line; do
     case "$line" in
         *"ABS_MT_POSITION_X"*)
             raw=${line##* }
-            raw_x=$((0x$raw)); have_x=1; frame_x=1
+            # Ignore incomplete/status lines that mention an ABS code but do
+            # not include its hexadecimal value.  In particular, never pass
+            # an empty value to arithmetic as "0x".
+            if is_hex "$raw"; then
+                raw_x=$((0x$raw)); have_x=1; frame_x=1
+            fi
             ;;
         *"ABS_MT_POSITION_Y"*)
             raw=${line##* }
-            raw_y=$((0x$raw)); have_y=1; frame_y=1
+            if is_hex "$raw"; then
+                raw_y=$((0x$raw)); have_y=1; frame_y=1
+            fi
             ;;
         *"ABS_MT_TRACKING_ID"*)
             raw=${line##* }
-            [ "$raw" = "ffffffff" ] || frame_tracking_down=1
+            if is_hex "$raw"; then
+                [ "$raw" = "ffffffff" ] || frame_tracking_down=1
+            fi
             ;;
         *"EV_KEY"*"BTN_TOUCH"*"DOWN"*)
             frame_touch_down=1
