@@ -58,13 +58,11 @@ done
 if [ "$Z_X1" -gt "$Z_X2" ]; then temp=$Z_X1; Z_X1=$Z_X2; Z_X2=$temp; fi
 if [ "$Z_Y1" -gt "$Z_Y2" ]; then temp=$Z_Y1; Z_Y1=$Z_Y2; Z_Y2=$temp; fi
 
+# Keep the temporary path file beside the script's invocation directory.  This
+# avoids relying on Android directories that rish/Termux may not be allowed to
+# write.  Set PATH_FILE explicitly only when another writable location is known.
 PATH_FILE=${PATH_FILE:-./detect_password_input_$$.path}
-# rish/Termux can disallow FIFO creation.  A normal temporary file is enough
-# for the sampled path; getevent itself is consumed through a standard pipe.
-if ! : > "$PATH_FILE" 2>/dev/null; then
-    PATH_FILE="${TMPDIR:-/tmp}/detect_password_input_$$.path"
-    : > "$PATH_FILE" 2>/dev/null || { echo 0; exit 0; }
-fi
+: > "$PATH_FILE" 2>/dev/null || { echo 0; exit 0; }
 cleanup() {
     rm -f "$PATH_FILE"
 }
@@ -117,7 +115,9 @@ password_from_path() {
 }
 
 raw_x=0; raw_y=0; have_x=0; have_y=0
-frame_x=0; frame_y=0; frame_down=0; frame_up=0
+frame_x=0; frame_y=0; frame_tracking_down=0
+frame_touch_down=0; frame_finger_down=0
+frame_touch_up=0; frame_finger_up=0
 path_active=0
 
 # Keep the event loop in the pipeline's right-hand process.  It can exit as
@@ -135,7 +135,19 @@ while IFS= read -r line; do
             ;;
         *"ABS_MT_TRACKING_ID"*)
             raw=${line##* }
-            [ "$raw" = "ffffffff" ] && frame_up=1 || frame_down=1
+            [ "$raw" = "ffffffff" ] || frame_tracking_down=1
+            ;;
+        *"EV_KEY"*"BTN_TOUCH"*"DOWN"*)
+            frame_touch_down=1
+            ;;
+        *"EV_KEY"*"BTN_TOOL_FINGER"*"DOWN"*)
+            frame_finger_down=1
+            ;;
+        *"EV_KEY"*"BTN_TOUCH"*"UP"*)
+            frame_touch_up=1
+            ;;
+        *"EV_KEY"*"BTN_TOOL_FINGER"*"UP"*)
+            frame_finger_up=1
             ;;
         *"EV_SYN"*"SYN_REPORT"*)
             if [ "$have_x" -eq 1 ] && [ "$have_y" -eq 1 ]; then
@@ -143,7 +155,10 @@ while IFS= read -r line; do
                 screen_y=$((raw_y * (SCREEN_Y - 1) / RAW_Y_MAX))
             fi
 
-            if [ "$path_active" -eq 0 ] && [ "$frame_down" -eq 1 ] &&
+            # A DOWN must be a complete touch frame: both key notifications,
+            # a non-terminal tracking ID, and a paired X/Y coordinate.
+            if [ "$path_active" -eq 0 ] && [ "$frame_tracking_down" -eq 1 ] &&
+               [ "$frame_touch_down" -eq 1 ] && [ "$frame_finger_down" -eq 1 ] &&
                [ "$frame_x" -eq 1 ] && [ "$frame_y" -eq 1 ] && in_zone; then
                 path_active=1
                 printf '%s,%s\n' "$screen_x" "$screen_y" >> "$PATH_FILE"
@@ -152,7 +167,10 @@ while IFS= read -r line; do
                 printf '%s,%s\n' "$screen_x" "$screen_y" >> "$PATH_FILE"
             fi
 
-            if [ "$path_active" -eq 1 ] && [ "$frame_up" -eq 1 ]; then
+            # The final coordinates can be in an earlier frame, so evaluate
+            # the cached coordinate when both key-up notifications arrive.
+            if [ "$path_active" -eq 1 ] && [ "$frame_touch_up" -eq 1 ] &&
+               [ "$frame_finger_up" -eq 1 ]; then
                 if in_zone; then
                     password=$(password_from_path)
                     [ -n "$password" ] && echo "$password" || echo 0
@@ -161,7 +179,9 @@ while IFS= read -r line; do
                 : > "$PATH_FILE"
                 path_active=0
             fi
-            frame_x=0; frame_y=0; frame_down=0; frame_up=0
+            frame_x=0; frame_y=0; frame_tracking_down=0
+            frame_touch_down=0; frame_finger_down=0
+            frame_touch_up=0; frame_finger_up=0
             ;;
     esac
 done
