@@ -58,27 +58,19 @@ done
 if [ "$Z_X1" -gt "$Z_X2" ]; then temp=$Z_X1; Z_X1=$Z_X2; Z_X2=$temp; fi
 if [ "$Z_Y1" -gt "$Z_Y2" ]; then temp=$Z_Y1; Z_Y1=$Z_Y2; Z_Y2=$temp; fi
 
-tmpdir=
-for candidate in /tmp /data/data/com.termux/files/usr/tmp /dev/shm; do
-    [ -d "$candidate" ] && { tmpdir=$candidate; break; }
-done
-[ -n "$tmpdir" ] || { echo 0; exit 0; }
-
-EVENT_PIPE="$tmpdir/detect_password_input_$$.pipe"
-PATH_FILE="$tmpdir/detect_password_input_$$.path"
-GETEVENT_PID=
+PATH_FILE=${PATH_FILE:-/data/local/tmp/detect_password_input_$$.path}
+# rish/Termux can disallow FIFO creation.  A normal temporary file is enough
+# for the sampled path; getevent itself is consumed through a standard pipe.
+if ! : > "$PATH_FILE" 2>/dev/null; then
+    PATH_FILE="${TMPDIR:-/tmp}/detect_password_input_$$.path"
+    : > "$PATH_FILE" 2>/dev/null || { echo 0; exit 0; }
+fi
 cleanup() {
-    [ -n "$GETEVENT_PID" ] && kill "$GETEVENT_PID" 2>/dev/null
-    rm -f "$EVENT_PIPE" "$PATH_FILE"
+    rm -f "$PATH_FILE"
 }
 trap cleanup EXIT HUP INT TERM
 
-mkfifo "$EVENT_PIPE" || { echo 0; exit 0; }
-: > "$PATH_FILE" || { echo 0; exit 0; }
 command -v getevent >/dev/null 2>&1 || { echo 0; exit 0; }
-getevent -lt "$EVENT_DEVICE" > "$EVENT_PIPE" 2>/dev/null &
-GETEVENT_PID=$!
-exec 3<"$EVENT_PIPE"
 
 in_zone() {
     [ "$screen_x" -ge "$Z_X1" ] && [ "$screen_x" -le "$Z_X2" ] &&
@@ -128,7 +120,10 @@ raw_x=0; raw_y=0; have_x=0; have_y=0
 frame_x=0; frame_y=0; frame_down=0; frame_up=0
 path_active=0
 
-while IFS= read -r line <&3; do
+# Keep the event loop in the pipeline's right-hand process.  It can exit as
+# soon as a completed gesture is found, which closes the pipe to getevent.
+getevent -lt "$EVENT_DEVICE" 2>/dev/null | {
+while IFS= read -r line; do
     case "$line" in
         *"ABS_MT_POSITION_X"*)
             raw=${line##* }
@@ -172,4 +167,5 @@ while IFS= read -r line <&3; do
 done
 
 echo 0
+}
 exit 0
