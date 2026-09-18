@@ -116,9 +116,8 @@ password_from_path() {
 }
 
 raw_x=0; raw_y=0; have_x=0; have_y=0
-frame_x=0; frame_y=0; frame_tracking_down=0
-frame_touch_down=0; frame_finger_down=0
-frame_touch_up=0; frame_finger_up=0
+down_x=0; down_y=0
+touch_is_down=0; finger_is_down=0; tracking_is_active=0
 path_active=0
 
 # Keep the event loop in the pipeline's right-hand process.  It can exit as
@@ -132,32 +131,39 @@ while IFS= read -r line; do
             # not include its hexadecimal value.  In particular, never pass
             # an empty value to arithmetic as "0x".
             if is_hex "$raw"; then
-                raw_x=$((0x$raw)); have_x=1; frame_x=1
+                raw_x=$((0x$raw)); have_x=1
+                [ "$tracking_is_active" -eq 1 ] && down_x=1
             fi
             ;;
         *"ABS_MT_POSITION_Y"*)
             raw=${line##* }
             if is_hex "$raw"; then
-                raw_y=$((0x$raw)); have_y=1; frame_y=1
+                raw_y=$((0x$raw)); have_y=1
+                [ "$tracking_is_active" -eq 1 ] && down_y=1
             fi
             ;;
         *"ABS_MT_TRACKING_ID"*)
             raw=${line##* }
             if is_hex "$raw"; then
-                [ "$raw" = "ffffffff" ] || frame_tracking_down=1
+                if [ "$raw" = "ffffffff" ]; then
+                    tracking_is_active=0
+                else
+                    tracking_is_active=1
+                    down_x=0; down_y=0
+                fi
             fi
             ;;
         *"EV_KEY"*"BTN_TOUCH"*"DOWN"*)
-            frame_touch_down=1
+            touch_is_down=1
             ;;
         *"EV_KEY"*"BTN_TOOL_FINGER"*"DOWN"*)
-            frame_finger_down=1
+            finger_is_down=1
             ;;
         *"EV_KEY"*"BTN_TOUCH"*"UP"*)
-            frame_touch_up=1
+            touch_is_down=0
             ;;
         *"EV_KEY"*"BTN_TOOL_FINGER"*"UP"*)
-            frame_finger_up=1
+            finger_is_down=0
             ;;
         *"EV_SYN"*"SYN_REPORT"*)
             if [ "$have_x" -eq 1 ] && [ "$have_y" -eq 1 ]; then
@@ -165,11 +171,12 @@ while IFS= read -r line; do
                 screen_y=$((raw_y * (SCREEN_Y - 1) / RAW_Y_MAX))
             fi
 
-            # A DOWN must be a complete touch frame: both key notifications,
-            # a non-terminal tracking ID, and a paired X/Y coordinate.
-            if [ "$path_active" -eq 0 ] && [ "$frame_tracking_down" -eq 1 ] &&
-               [ "$frame_touch_down" -eq 1 ] && [ "$frame_finger_down" -eq 1 ] &&
-               [ "$frame_x" -eq 1 ] && [ "$frame_y" -eq 1 ] && in_zone; then
+            # Android drivers may emit key and ABS events in separate
+            # SYN_REPORT frames.  Keep their state until release, then begin
+            # as soon as a complete post-DOWN X/Y pair is available in Z.
+            if [ "$path_active" -eq 0 ] && [ "$tracking_is_active" -eq 1 ] &&
+               [ "$touch_is_down" -eq 1 ] && [ "$finger_is_down" -eq 1 ] &&
+               [ "$down_x" -eq 1 ] && [ "$down_y" -eq 1 ] && in_zone; then
                 path_active=1
                 printf '%s,%s\n' "$screen_x" "$screen_y" >> "$PATH_FILE"
             elif [ "$path_active" -eq 1 ] && [ "$have_x" -eq 1 ] &&
@@ -178,9 +185,9 @@ while IFS= read -r line; do
             fi
 
             # The final coordinates can be in an earlier frame, so evaluate
-            # the cached coordinate when both key-up notifications arrive.
-            if [ "$path_active" -eq 1 ] && [ "$frame_touch_up" -eq 1 ] &&
-               [ "$frame_finger_up" -eq 1 ]; then
+            # the cached coordinate after both touch key states are released.
+            if [ "$path_active" -eq 1 ] && [ "$touch_is_down" -eq 0 ] &&
+               [ "$finger_is_down" -eq 0 ]; then
                 if in_zone; then
                     password=$(password_from_path)
                     [ -n "$password" ] && echo "$password" || echo 0
@@ -189,9 +196,6 @@ while IFS= read -r line; do
                 : > "$PATH_FILE"
                 path_active=0
             fi
-            frame_x=0; frame_y=0; frame_tracking_down=0
-            frame_touch_down=0; frame_finger_down=0
-            frame_touch_up=0; frame_finger_up=0
             ;;
     esac
 done
