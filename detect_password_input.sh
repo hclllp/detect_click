@@ -58,7 +58,7 @@ done
 if [ "$Z_X1" -gt "$Z_X2" ]; then temp=$Z_X1; Z_X1=$Z_X2; Z_X2=$temp; fi
 if [ "$Z_Y1" -gt "$Z_Y2" ]; then temp=$Z_Y1; Z_Y1=$Z_Y2; Z_Y2=$temp; fi
 
-PATH_FILE=${PATH_FILE:-/data/local/tmp/detect_password_input_$$.path}
+PATH_FILE=${PATH_FILE:-./detect_password_input_$$.path}
 # rish/Termux can disallow FIFO creation.  A normal temporary file is enough
 # for the sampled path; getevent itself is consumed through a standard pipe.
 if ! : > "$PATH_FILE" 2>/dev/null; then
